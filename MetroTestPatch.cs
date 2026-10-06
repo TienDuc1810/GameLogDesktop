@@ -45,18 +45,20 @@ public static class MetroTestPatch
   }
   using var output=new MemoryStream();using var w=new BinaryWriter(output);w.Write(original,0,checked(24+(int)tableBytes));w.Write(checked((uint)data.Length));w.Write(data.ToArray());return output.ToArray();
  }
- public static MetroPatchInfo Build(string root,IReadOnlyList<GameText> rows,string destination)
+ public static MetroPatchInfo Build(string root,IReadOnlyList<GameText> rows,string destination,bool retainOriginalText=false)
  {
   root=Path.GetFullPath(root);destination=Path.GetFullPath(destination);if(destination.StartsWith(root+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase)||destination.Equals(root,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Tạo gói ở thư mục riêng, không ghi vào game.");
-  var original=File.ReadAllBytes(Path.Combine(root,"content.vfx"));var expected=MetroLocalization.ReadEnglish(root);var raw=Encode(MetroLocalization.ReadEnglishBytes(root),rows);Directory.CreateDirectory(destination);
+  var original=File.ReadAllBytes(Path.Combine(root,"content.vfx"));var expected=MetroLocalization.ReadEnglish(root);var originalText=MetroLocalization.ReadEnglishBytes(root);var raw=retainOriginalText?originalText:Encode(originalText,rows);Directory.CreateDirectory(destination);
   using var input=new MemoryStream(original);using var reader=new BinaryReader(input);input.Position=24;var archiveCount=reader.ReadUInt32();var entryCount=reader.ReadUInt32();reader.ReadUInt32();
   string CString(){var bytes=new List<byte>();byte b;while((b=reader.ReadByte())!=0)bytes.Add(b);return Encoding.UTF8.GetString(bytes.ToArray());}
   for(var a=0;a<archiveCount;a++){if(CString().Equals(ArchiveName,StringComparison.OrdinalIgnoreCase))throw new InvalidDataException("Archive thử đã tồn tại trong mục lục.");var folders=reader.ReadUInt32();for(var f=0;f<folders;f++)CString();reader.ReadUInt32();}
   var archivesEnd=checked((int)input.Position);int target=-1;
   for(var e=0;e<entryCount;e++){var start=checked((int)input.Position);var type=reader.ReadUInt16();if(type==0)input.Position+=14;else if(type==8)input.Position+=6;else throw new InvalidDataException("Mục lục không hỗ trợ.");var length=reader.ReadByte();var key=reader.ReadByte();var name=reader.ReadBytes(length);for(var i=0;i<name.Length-1;i++)name[i]^=key;if(Encoding.UTF8.GetString(name,0,name.Length-1)=="stable_us.lng"){if(target>=0||type!=0)throw new InvalidDataException("Tài nguyên bị trùng.");target=start;}}
   if(target<0)throw new InvalidDataException("Không tìm thấy stable_us.lng.");
-  using(var archive=File.Create(Path.Combine(destination,ArchiveName)))using(var writer=new BinaryWriter(archive)){for(var offset=0;offset<raw.Length;offset+=65536){var count=Math.Min(65536,raw.Length-offset);writer.Write((uint)(count+8));writer.Write((uint)(count+8));writer.Write(raw,offset,count);}writer.Write(0u);writer.Write(16u);writer.Write(original,8,16);}
-  var archiveSize=checked((uint)new FileInfo(Path.Combine(destination,ArchiveName)).Length);var packedSize=archiveSize-24;
+  // Use the archive's existing uncompressed resource mode: packed size equals
+  // resource size and there are no linked-block headers to interpret.
+  using(var archive=File.Create(Path.Combine(destination,ArchiveName)))using(var writer=new BinaryWriter(archive)){writer.Write(raw);writer.Write(0u);writer.Write(16u);writer.Write(original,8,16);}
+  var archiveSize=checked((uint)new FileInfo(Path.Combine(destination,ArchiveName)).Length);var packedSize=checked((uint)raw.Length);
   using var extra=new MemoryStream();using(var w=new BinaryWriter(extra,Encoding.UTF8,true)){w.Write(Encoding.ASCII.GetBytes(ArchiveName));w.Write((byte)0);w.Write(0u);w.Write(archiveSize);}
   using var index=new MemoryStream();index.Write(original,0,archivesEnd);index.Write(extra.ToArray());index.Write(original,archivesEnd,original.Length-archivesEnd);var bytes=index.ToArray();BitConverter.GetBytes(archiveCount+1).CopyTo(bytes,24);var pos=target+(int)extra.Length;BitConverter.GetBytes(checked((ushort)archiveCount)).CopyTo(bytes,pos+2);BitConverter.GetBytes(0u).CopyTo(bytes,pos+4);BitConverter.GetBytes(checked((uint)raw.Length)).CopyTo(bytes,pos+8);BitConverter.GetBytes(packedSize).CopyTo(bytes,pos+12);File.WriteAllBytes(Path.Combine(destination,"content.vfx"),bytes);
   var roundtrip=MetroLocalization.ReadEnglish(destination);if(roundtrip.Lines.Count!=rows.Count||roundtrip.Lines.Where((x,i)=>x.GameKey!=rows[i].GameKey).Any())throw new InvalidDataException("Gói thử đọc lại không khớp.");
