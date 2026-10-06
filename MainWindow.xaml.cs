@@ -111,7 +111,7 @@ public partial class MainWindow : Window
  {
   var menu=new ContextMenu{Background=System.Windows.Media.Brushes.MidnightBlue,Foreground=System.Windows.Media.Brushes.White};
   void Item(string text,RoutedEventHandler handler){var i=new MenuItem{Header=text};i.Click+=handler;menu.Items.Add(i);}
-  Item("Nhập game Steam trên máy",ImportInstalled);Item("Đồng bộ thư viện Steam API",SyncOwned);Item("Xuất CSV",ExportCsv);Item("Tạo shortcut ngoài Desktop",DesktopShortcut);Item("Kiểm tra cập nhật",CheckUpdates);Item("Thiết lập nguồn cập nhật",UpdateSettings);menu.PlacementTarget=sender as Button;menu.IsOpen=true;
+  Item("API key dịch dùng chung",(_,_)=>{if(notifications!=null)SharedApiKeyDialog.Show(this,notifications);});Item("Nhập game Steam trên máy",ImportInstalled);Item("Đồng bộ thư viện Steam API",SyncOwned);Item("Xuất CSV",ExportCsv);Item("Tạo shortcut ngoài Desktop",DesktopShortcut);Item("Kiểm tra cập nhật",CheckUpdates);Item("Thiết lập nguồn cập nhật",UpdateSettings);menu.PlacementTarget=sender as Button;menu.IsOpen=true;
  }
  private void ExportCsv(object sender,RoutedEventArgs e){var d=new SaveFileDialog{Filter="CSV|*.csv",FileName="games.csv"};if(d.ShowDialog()!=true)return;static string Q(object? v)=>"\""+(v?.ToString()??"").Replace("\"","\"\"")+"\"";File.WriteAllLines(d.FileName,new[]{"Tên game,Nền tảng,Phân loại,Phút,Điểm,Ghi chú"}.Concat(store.Games.Select(g=>string.Join(",",new[]{Q(g.Name),Q(g.Platform),Q(g.Kind),Q(g.Minutes),Q(g.RatingSet?g.Rating:null),Q(g.Notes)}))),new System.Text.UTF8Encoding(true));Say("Đã xuất CSV.");}
 }

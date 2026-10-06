@@ -8,6 +8,7 @@ namespace GameLogDesktop;
 public sealed class OpenAiTranslation:IDisposable
 {
  private readonly HttpClient client;
+ public async Task<ModelPrice> CurrentPrice(CancellationToken ct)=>TranslationCosts.ParsePrice(await client.GetStringAsync(TranslationCosts.PriceUrl,ct),DateTimeOffset.UtcNow);
  public OpenAiTranslation(HttpMessageHandler? handler=null){client=new(handler??new HttpClientHandler{AllowAutoRedirect=false}){Timeout=TimeSpan.FromMinutes(3)};}
  private static readonly Regex tokens=new(@"<[^>]+>|\{[^{}]*\}|%\d*\$?[-+0 #]*\d*(?:\.\d+)?[a-zA-Z]|\\[nrt]|\[[^\[\]\r\n]+\]",RegexOptions.Compiled);
  internal static void Validate(IReadOnlyList<GameText> source,IReadOnlyList<GameText> translated)

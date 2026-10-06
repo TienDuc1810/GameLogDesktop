@@ -21,6 +21,13 @@ $zipPath=Join-Path $buildRoot $zipName
 $feedPath=Join-Path $buildRoot 'update-feed.json'
 Copy-Item -LiteralPath ([IO.Path]::ChangeExtension($zipPath,'.feed.json')) -Destination $feedPath
 if($PrepareOnly){Write-Output "Prepared release: $buildRoot";exit}
-& gh release create $Tag $zipPath $feedPath --repo $Repository --verify-tag --title "GameLog Desktop $version" --generate-notes --latest
+& gh release view $Tag --repo $Repository *> $null
+if($LASTEXITCODE -eq 0){
+ & gh release upload $Tag $zipPath $feedPath --repo $Repository --clobber
+ if($LASTEXITCODE -ne 0){throw 'Upload failed'}
+ & gh release edit $Tag --repo $Repository --latest
+}else{
+ & gh release create $Tag $zipPath $feedPath --repo $Repository --verify-tag --title "GameLog Desktop $version" --generate-notes --latest
+}
 if($LASTEXITCODE -ne 0){throw 'GitHub publication failed; build files remain for inspection'}
 Write-Output "Published $Repository $Tag"

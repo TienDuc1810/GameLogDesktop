@@ -15,12 +15,15 @@ public partial class LocalizationWindow:Window
  private readonly AppNotifications notices;
  private readonly DispatcherTimer keyTimer=new(){Interval=TimeSpan.FromSeconds(1)};
  private TranslationQuote? quote;
- public LocalizationWindow(Game selected,bool package=false,AppNotifications? notifications=null)
+ public LocalizationWindow(Game selected,bool package=false,AppNotifications? notifications=null,bool start=false)
  {
   notices=notifications??new AppNotifications(App.SelfTestDirectory??Path.Combine(AppContext.BaseDirectory,"desktop-data"));
   InitializeComponent();game=selected;GameTitle.Text=game.Name;Tabs.SelectedIndex=package?2:1;
+  try{ApiKey.Password=SharedApiKey.Load(notices.DirectoryPath);}catch(Exception ex){Status.Text="Không đọc được key dùng chung: "+ex.Message;}
+  if(game.AppId!="286690"){GameTranslateButton.IsEnabled=false;Status.Text="Tự dịch hiện hỗ trợ Metro 2033 Redux. Chọn đúng game trong bảng Việt hóa; thay thư mục không thay game đã chọn.";}
   Closed+=(_,_)=>{keyTimer.Stop();translationCancellation?.Cancel();ApiKey.Clear();};keyTimer.Tick+=(_,_)=>UpdateKeyCountdown();keyTimer.Start();UpdateKeyCountdown();
   try{Folder.Text=SteamService.InstallFolder(game.AppId)??"";}catch{Status.Text="Chọn thư mục game bằng nút Chọn thư mục game.";}
+  if(start&&game.AppId=="286690")Loaded+=(_,_)=>{if(!string.IsNullOrWhiteSpace(Folder.Text))TranslateGame(this,new RoutedEventArgs());else Status.Text="Chọn thư mục cài game, rồi bấm Dịch game.";};
  }
  private void CredentialsChanged(object sender,RoutedEventArgs e){if(CostSummary==null)return;InvalidateQuote();}
  private void InvalidateQuote(){quote=null;if(CostSummary!=null)CostSummary.Text="Tính lại token và chi phí cho lô dịch tiếp theo. Giới hạn 1 USD mỗi lần bấm dịch.";if(TranslateButton!=null)TranslateButton.IsEnabled=false;}
@@ -35,6 +38,34 @@ public partial class LocalizationWindow:Window
   catch(Exception ex){TranslateButton.IsEnabled=false;Status.Text="Theo dõi thời hạn bị lỗi: "+ex.Message;}
  }
  private List<GameText> NextLines()=>draft.Where(x=>string.IsNullOrWhiteSpace(x.Vietnamese)&&!string.IsNullOrWhiteSpace(x.Source)).Take(20).ToList();
+ private void SharedKeySettings(object sender,RoutedEventArgs e){SharedApiKeyDialog.Show(this,notices);ApiKey.Password=SharedApiKey.Load(notices.DirectoryPath);UpdateKeyCountdown();}
+ private bool ConfirmJob(TranslationJob job)
+ {
+  var allowed=job.CeilingUsd<=AppNotifications.MaxUsd;var dialog=new Window{Title="Xác nhận dịch game",Owner=this,Width=560,SizeToContent=SizeToContent.Height,WindowStartupLocation=WindowStartupLocation.CenterOwner,ResizeMode=ResizeMode.NoResize};var panel=new System.Windows.Controls.StackPanel{Margin=new Thickness(24)};
+  panel.Children.Add(new System.Windows.Controls.TextBlock{Text=$"{game.Name} · {job.Count:N0} câu\n\nChi phí tối đa dự phòng: ${TranslationQuote.Label(job.CeilingUsd)}. Đây là trần bảo thủ, chi phí thực tế có thể thấp hơn.\n"+(allowed?"Bản dịch sẽ tự lưu JSON. Chưa cài vào game; cần xử lý font và đóng gói trước.":"Vượt giới hạn 1 USD mỗi lần bạn đã đặt. App không gửi yêu cầu dịch."),TextWrapping=TextWrapping.Wrap,Margin=new Thickness(0,0,0,20)});
+  var yes=new System.Windows.Controls.Button{Content="Dịch",IsEnabled=allowed};yes.Click+=(_,_)=>dialog.DialogResult=true;panel.Children.Add(yes);var no=new System.Windows.Controls.Button{Content="Không dịch"};no.Click+=(_,_)=>dialog.DialogResult=false;panel.Children.Add(no);dialog.Content=panel;return dialog.ShowDialog()==true;
+ }
+ private string SaveJobDraft()
+ {
+  if(document==null)throw new InvalidOperationException("Chưa đọc văn bản game.");var folder=Path.Combine(notices.DirectoryPath,"translations",game.AppId);Directory.CreateDirectory(folder);var file=Path.Combine(folder,"draft-"+document.TextHash+".json");var temporary=file+".tmp";
+  File.WriteAllText(temporary,JsonSerializer.Serialize(new{Product="GameLogTranslationDraft",Version=1,AppId=game.AppId,document.IndexHash,document.TextHash,document.MissingCharacters,Lines=draft},Storage.Json));File.Move(temporary,file,true);return file;
+ }
+ private async void TranslateGame(object sender,RoutedEventArgs e)
+ {
+  if(translationCancellation!=null)return;translationCancellation=new();GameTranslateButton.IsEnabled=false;CancelTranslationButton.IsEnabled=true;Folder.IsEnabled=false;ScanButton.IsEnabled=false;SharedKeyButton.IsEnabled=false;string saved="";
+  try{
+   var key=SharedApiKey.Load(notices.DirectoryPath);if(key==""){SharedApiKeyDialog.Show(this,notices);key=SharedApiKey.Load(notices.DirectoryPath);}notices.RequireKey(key);if(game.AppId!="286690")throw new InvalidOperationException("Bộ xử lý tự dịch hiện chỉ hỗ trợ Metro 2033 Redux.");
+   Status.Text="Đang đọc văn bản và chuẩn bị chi phí…";var root=Path.GetFullPath(Folder.Text.Trim());document=await Task.Run(()=>MetroLocalization.ReadEnglish(root),translationCancellation.Token);draft=document.Lines.ToList();
+   var previous=Path.Combine(notices.DirectoryPath,"translations",game.AppId,"draft-"+document.TextHash+".json");if(File.Exists(previous)){using var json=JsonDocument.Parse(File.ReadAllText(previous));if(json.RootElement.GetProperty("AppId").GetString()!=game.AppId||json.RootElement.GetProperty("IndexHash").GetString()!=document.IndexHash)throw new InvalidDataException("Bản nháp không khớp tài nguyên game.");var old=json.RootElement.GetProperty("Lines").Deserialize<List<GameText>>(Storage.Json)??[];var originals=document.Lines.ToDictionary(x=>x.Id);if(old.Count!=originals.Count||old.Select(x=>x.Id).Distinct().Count()!=old.Count||old.Any(x=>!originals.TryGetValue(x.Id,out var original)||x.Source!=original.Source))throw new InvalidDataException("Bản nháp không khớp câu gốc.");var done=old.Where(x=>!string.IsNullOrWhiteSpace(x.Vietnamese)).ToList();OpenAiTranslation.Validate(done.Select(x=>originals[x.Id]).ToList(),done);var map=old.ToDictionary(x=>x.Id);draft=draft.Select(x=>map.TryGetValue(x.Id,out var translated)&&translated.Source==x.Source?translated:x).ToList();}
+   TextGrid.ItemsSource=draft;using var api=new OpenAiTranslation();var job=TranslationJobPlanner.Plan(draft,await api.CurrentPrice(translationCancellation.Token));if(job.Count==0){Status.Text="Bản nháp đã dịch đủ câu: "+previous;return;}
+   if(job.CeilingUsd>1m)Notify("Dịch game vượt giới hạn",$"{game.Name}: trần dự phòng ${TranslationQuote.Label(job.CeilingUsd)} > 1 USD; chưa gửi dịch.","Cảnh báo");
+   if(!ConfirmJob(job)){Status.Text="Không gửi dịch. Bạn có thể xem lại giới hạn và bản nháp.";return;}saved=SaveJobDraft();decimal reserved=0;var completed=0;
+   foreach(var batch in job.Batches){translationCancellation.Token.ThrowIfCancellationRequested();var q=await api.Quote(batch,key,"gpt-4.1-mini",notices,translationCancellation.Token);if(reserved+q.CeilingUsd>job.CeilingUsd||reserved+q.CeilingUsd>1m)throw new InvalidOperationException("Chi phí mới vượt trần đã xác nhận; dừng trước khi gửi lô tiếp theo.");reserved+=q.CeilingUsd;var result=await api.Translate(batch,key,q,notices,translationCancellation.Token);var map=result.ToDictionary(x=>x.Id);draft=draft.Select(x=>map.TryGetValue(x.Id,out var translated)?translated:x).ToList();saved=SaveJobDraft();completed+=result.Count;TextGrid.ItemsSource=draft;Status.Text=$"Đang dịch {completed:N0}/{job.Count:N0} câu · bản nháp tự lưu.";}
+   Status.Text="Đã dịch xong và tự lưu JSON: "+saved+". Chưa cài bản dịch vào game.";Notify("Đã dịch xong",game.Name+" · JSON: "+saved+". Chưa áp dụng vào game.");
+  }catch(OperationCanceledException){Status.Text="Đã dừng. Các lô hoàn tất đã tự lưu; yêu cầu đang gửi có thể vẫn bị tính phí.";}
+  catch(Exception ex){Status.Text="Chưa hoàn tất dịch game: "+ex.Message;Notify("Dịch game chưa hoàn tất",ex.Message+(saved!=""?" · Bản nháp: "+saved:""),"Cảnh báo");}
+  finally{translationCancellation.Dispose();translationCancellation=null;GameTranslateButton.IsEnabled=game.AppId=="286690";CancelTranslationButton.IsEnabled=false;Folder.IsEnabled=true;ScanButton.IsEnabled=true;SharedKeyButton.IsEnabled=true;}
+ }
  private async void EstimateCost(object sender,RoutedEventArgs e)
  {
   if(document==null||translationCancellation!=null)return;InvalidateQuote();var lines=NextLines();if(lines.Count==0){Status.Text="Đã hết câu chưa dịch.";return;}

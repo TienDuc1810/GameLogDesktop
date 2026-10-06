@@ -9,7 +9,7 @@ public partial class MainWindow
  {
   if(TranslationGrid.SelectedItem is not TranslationRow row){Say("Chọn game trong bảng Việt hoá trước.");return;}
   if(notifications==null){Say("Chưa đọc được dữ liệu thời hạn/ngân sách, không mở dịch. Xem mục Thông báo.");return;}
-  new LocalizationWindow(row.Game,package,notifications){Owner=this}.ShowDialog();
+  new LocalizationWindow(row.Game,package,notifications,start:!package){Owner=this}.ShowDialog();
  }
  private TranslationService? translations;
  private TranslationService Translations=>translations??=new(store.DirectoryPath);

@@ -26,6 +26,7 @@ public sealed class AppNotifications
 {
  public const decimal MaxUsd=1m;
  private readonly string file;private readonly Func<DateTimeOffset> now;
+ public string DirectoryPath=>Path.GetDirectoryName(file)!;
  public NotificationState State{get;}
  public event Action? Changed;
  public AppNotifications(string directory,Func<DateTimeOffset>? clock=null)
