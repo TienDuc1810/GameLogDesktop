@@ -54,8 +54,9 @@ public partial class LocalizationWindow:Window
  {
   if(translationCancellation!=null||patchBusy)return;translationCancellation=new();GameTranslateButton.IsEnabled=false;CancelTranslationButton.IsEnabled=true;Folder.IsEnabled=false;ScanButton.IsEnabled=false;SharedKeyButton.IsEnabled=false;string saved="";
   try{
+   var root=Path.GetFullPath(Folder.Text.Trim());if(File.Exists(Path.Combine(root,"gamelog-metro-backup","patch-manifest.json"))){Status.Text="Đã cài bản thử Metro. Không cần dịch lại; mở game để kiểm tra hoặc bấm Khôi phục tiếng Anh.";return;}
    var key=SharedApiKey.Load(notices.DirectoryPath);if(key==""){SharedApiKeyDialog.Show(this,notices);key=SharedApiKey.Load(notices.DirectoryPath);}notices.RequireKey(key);if(game.AppId!="286690")throw new InvalidOperationException("Bộ xử lý tự dịch hiện chỉ hỗ trợ Metro 2033 Redux.");
-   Status.Text="Đang đọc văn bản và chuẩn bị chi phí…";var root=Path.GetFullPath(Folder.Text.Trim());document=await Task.Run(()=>MetroLocalization.ReadEnglish(root),translationCancellation.Token);draft=document.Lines.ToList();
+   Status.Text="Đang đọc văn bản và chuẩn bị chi phí…";document=await Task.Run(()=>MetroLocalization.ReadEnglish(root),translationCancellation.Token);draft=document.Lines.ToList();
    var previous=Path.Combine(notices.DirectoryPath,"translations",game.AppId,"draft-"+document.TextHash+".json");if(File.Exists(previous)){using var json=JsonDocument.Parse(File.ReadAllText(previous));if(json.RootElement.GetProperty("AppId").GetString()!=game.AppId||json.RootElement.GetProperty("IndexHash").GetString()!=document.IndexHash)throw new InvalidDataException("Bản nháp không khớp tài nguyên game.");var old=json.RootElement.GetProperty("Lines").Deserialize<List<GameText>>(Storage.Json)??[];var originals=document.Lines.ToDictionary(x=>x.Id);if(old.Count!=originals.Count||old.Select(x=>x.Id).Distinct().Count()!=old.Count||old.Any(x=>!originals.TryGetValue(x.Id,out var original)||x.Source!=original.Source))throw new InvalidDataException("Bản nháp không khớp câu gốc.");var done=old.Where(x=>!string.IsNullOrWhiteSpace(x.Vietnamese)).ToList();OpenAiTranslation.Validate(done.Select(x=>originals[x.Id]).ToList(),done);var map=old.ToDictionary(x=>x.Id);draft=draft.Select(x=>map.TryGetValue(x.Id,out var translated)&&translated.Source==x.Source?translated:x).ToList();}
    TextGrid.ItemsSource=draft;using var api=new OpenAiTranslation();var job=TranslationJobPlanner.Plan(draft,await api.CurrentPrice(translationCancellation.Token));if(job.Count==0){Status.Text="Bản nháp đã dịch đủ câu: "+previous;return;}
    if(job.CeilingUsd>1m)Notify("Dịch game vượt giới hạn",$"{game.Name}: trần dự phòng ${TranslationQuote.Label(job.CeilingUsd)} > 1 USD; chưa gửi dịch.","Cảnh báo");
@@ -154,6 +155,7 @@ public partial class LocalizationWindow:Window
   catch(Exception ex){Status.Text="Không chấp nhận gói: "+ex.Message;}
  }
 }
+
 
 
 
