@@ -1,0 +1,8 @@
+bin/
+obj/
+release-output/
+desktop-data/
+data/
+backup/
+*.log
+.gamelog-update-*/

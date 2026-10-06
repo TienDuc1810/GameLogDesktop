@@ -1,0 +1,49 @@
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Text.Json;
+using System.Windows;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
+namespace GameLogDesktop;
+public partial class MainWindow
+{
+ private sealed class TranslationFixtureHandler:HttpMessageHandler
+ {
+  public string Body="";
+  public string CountBody="";
+  public int TranslationRequests;public int CountRequests;public long TokenCount=100;
+  public bool BadPrice;public bool FailCount;
+  protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancellationToken)
+  {
+   if(request.RequestUri?.AbsoluteUri==TranslationCosts.PriceUrl){if(request.Headers.Authorization!=null)throw new InvalidOperationException("Key leaked to public documentation");return new(HttpStatusCode.OK){Content=new StringContent(BadPrice?"pricing unavailable":"Text tokens Per 1M tokens Batch API price Input $0.40 Cached input $0.10 Output $1.60")};}
+   if(request.Headers.Authorization?.Scheme!="Bearer")throw new InvalidOperationException("Unexpected API request");
+   if(request.RequestUri?.AbsoluteUri=="https://api.openai.com/v1/responses/input_tokens"){CountRequests++;CountBody=await request.Content!.ReadAsStringAsync(cancellationToken);return new(FailCount?HttpStatusCode.Unauthorized:HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(new{input_tokens=TokenCount}))};}
+   if(request.RequestUri?.AbsoluteUri!="https://api.openai.com/v1/responses")throw new InvalidOperationException("Unexpected API request");TranslationRequests++;
+   Body=await request.Content!.ReadAsStringAsync(cancellationToken);
+   var value=JsonSerializer.Serialize(new{lines=new[]{new{id="menu_start",text="Chơi %s"}}});
+   return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(new{status="completed",usage=new{input_tokens=100,output_tokens=20},output=new[]{new{content=new[]{new{type="output_text",text=value}}}}}))};
+  }
+ }
+ private async Task SelfTestLocalization(string directory,Action<bool,string> check)
+ {
+  var source=new[]{new GameText("menu_start","Play %s")};using var handler=new TranslationFixtureHandler();using var api=new OpenAiTranslation(handler);var notices=new AppNotifications(Path.Combine(directory,"api-notices"));notices.Register("test-placeholder");var quote=await api.Quote(source,"test-placeholder","gpt-4.1-mini",notices,CancellationToken.None);var translated=await api.Translate(source,"test-placeholder",quote,notices,CancellationToken.None);
+  using var request=JsonDocument.Parse(handler.Body);check(translated.Single().Vietnamese=="Chơi %s"&&request.RootElement.GetProperty("store").GetBoolean()==false,"translation API uses strict structured output and does not request response storage");
+  check(handler.CountRequests==1&&handler.TranslationRequests==1&&quote.InputTokens==100&&quote.MaxOutputTokens==10000,"translation counts complete input before paid inference and quotes bounded output");
+  using var countRequest=JsonDocument.Parse(handler.CountBody);check(new[]{"model","input","instructions","text"}.All(name=>countRequest.RootElement.GetProperty(name).ToString()==request.RootElement.GetProperty(name).ToString()),"token count includes identical instructions, source text, and structured output schema");
+  check(notices.State.Reservations.Single().ActualUsd==0.000072m,"actual usage settles cost from response tokens");
+  var rejected=false;try{OpenAiTranslation.Validate(source,[new("menu_start","","Chơi")]);}catch(InvalidDataException){rejected=true;}check(rejected,"translation rejects lost placeholder");
+  rejected=false;try{OpenAiTranslation.Validate(source,[new("changed_id","","Chơi %s")]);}catch(InvalidDataException){rejected=true;}check(rejected,"translation rejects changed string identifier");
+  rejected=false;try{MetroLocalization.Parse([1,2,3],"test");}catch(InvalidDataException){rejected=true;}check(rejected,"Metro reader rejects truncated language files");
+  var folder=Environment.GetEnvironmentVariable("GAMELOG_METRO_PROBE");
+  if(!string.IsNullOrWhiteSpace(folder)){
+   var original=UpdateService.Hash(Path.Combine(folder,"content.vfx"));var document=await Task.Run(()=>MetroLocalization.ReadEnglish(folder));
+   check(document.Lines.Count>1000&&document.MissingCharacters.Contains('đ'),"actual Metro English extraction validates string table and detects missing Vietnamese glyph codes");check(original==UpdateService.Hash(Path.Combine(folder,"content.vfx")),"actual game index remains unchanged after extraction");
+   File.WriteAllText(Path.Combine(directory,"metro-diagnostic.json"),JsonSerializer.Serialize(new{document.IndexHash,document.TextHash,document.MissingCharacters,Count=document.Lines.Count},Storage.Json));
+  }
+  var dialog=new LocalizationWindow(new Game{Name="Metro 2033 Redux",AppId="286690"}){Owner=this};dialog.Show();await Dispatcher.InvokeAsync(()=>{},DispatcherPriority.ApplicationIdle);
+  check(dialog.ActualWidth>=820&&dialog.FindName("ApiKey") is System.Windows.Controls.PasswordBox,"localization workflow opens with masked session API key entry");
+  var bitmap=new RenderTargetBitmap((int)dialog.ActualWidth,(int)dialog.ActualHeight,96,96,PixelFormats.Pbgra32);bitmap.Render(dialog);var png=new PngBitmapEncoder();png.Frames.Add(BitmapFrame.Create(bitmap));using(var file=File.Create(Path.Combine(directory,"localization-dialog.png")))png.Save(file);dialog.Close();
+ }
+}
