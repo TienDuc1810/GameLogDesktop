@@ -15,6 +15,7 @@ public partial class MainWindow
   public string CountBody="";
   public int TranslationRequests;public int CountRequests;public long TokenCount=100;
   public bool BadPrice;public bool FailCount;
+  public bool ServerFailure;
   protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancellationToken)
   {
    if(request.RequestUri?.AbsoluteUri==TranslationCosts.PriceUrl||request.RequestUri?.AbsoluteUri==TranslationCosts.ModelPriceUrl(TranslationCosts.DefaultModel)){if(request.Headers.Authorization!=null)throw new InvalidOperationException("Key leaked to public documentation");return new(HttpStatusCode.OK){Content=new StringContent(BadPrice?"pricing unavailable":"Text tokens Per 1M tokens Batch API price Input $0.40 Cached input $0.10 Output $1.60")};}
@@ -22,6 +23,7 @@ public partial class MainWindow
    if(request.RequestUri?.AbsoluteUri=="https://api.openai.com/v1/responses/input_tokens"){CountRequests++;CountBody=await request.Content!.ReadAsStringAsync(cancellationToken);return new(FailCount?HttpStatusCode.Unauthorized:HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(new{input_tokens=TokenCount}))};}
    if(request.RequestUri?.AbsoluteUri!="https://api.openai.com/v1/responses")throw new InvalidOperationException("Unexpected API request");TranslationRequests++;
    Body=await request.Content!.ReadAsStringAsync(cancellationToken);
+   if(ServerFailure)return new((HttpStatusCode)520){Content=new StringContent("Unavailable")};
    var value=JsonSerializer.Serialize(new{lines=new[]{new{id="menu_start",text="Chơi %s"}}});
    return new(HttpStatusCode.OK){Content=new StringContent(JsonSerializer.Serialize(new{status="completed",usage=new{input_tokens=100,output_tokens=20},output=new[]{new{content=new[]{new{type="output_text",text=value}}}}}))};
   }
@@ -40,6 +42,7 @@ public partial class MainWindow
   check(handler.CountRequests==1&&handler.TranslationRequests==1&&quote.InputTokens==100&&quote.MaxOutputTokens==10000,"translation counts complete input before paid inference and quotes bounded output");
   using var countRequest=JsonDocument.Parse(handler.CountBody);check(new[]{"model","input","instructions","text"}.All(name=>countRequest.RootElement.GetProperty(name).ToString()==request.RootElement.GetProperty(name).ToString()),"token count includes identical instructions, source text, and structured output schema");
   check(notices.State.Reservations.Single().ActualUsd==0.000072m,"actual usage settles cost from response tokens");
+  handler.ServerFailure=true;var fallback=await api.Translate(source,"test-placeholder",quote,notices,CancellationToken.None);check(fallback.Single().Vietnamese==source.Single().Source&&handler.TranslationRequests==2&&notices.State.Reservations.Last().ActualUsd==null,"HTTP 520 keeps English without retry and retains unknown-cost reservation");handler.ServerFailure=false;
   var rejected=false;try{OpenAiTranslation.Validate(source,[new("menu_start","","Chơi")]);}catch(InvalidDataException){rejected=true;}check(rejected,"translation rejects lost placeholder");
   rejected=false;try{OpenAiTranslation.Validate(source,[new("changed_id","","Chơi %s")]);}catch(InvalidDataException){rejected=true;}check(rejected,"translation rejects changed string identifier");
   rejected=false;try{MetroLocalization.Parse([1,2,3],"test");}catch(InvalidDataException){rejected=true;}check(rejected,"Metro reader rejects truncated language files");
