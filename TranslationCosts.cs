@@ -14,7 +14,9 @@ public sealed record TranslationQuote(string Payload,string KeyFingerprint,strin
 public static class TranslationCosts
 {
  public const string PriceUrl="https://developers.openai.com/api/docs/models/gpt-4.1-mini";
- public static void RequireSupportedModel(string model){if(model!="gpt-4.1-mini")throw new InvalidOperationException("Chưa có bộ đọc giá xác minh cho model này. Hiện chỉ hỗ trợ gpt-4.1-mini; chưa gửi dịch.");}
+ public const string DefaultModel="gpt-4.1-nano";
+ public static string ModelPriceUrl(string model){RequireSupportedModel(model);return "https://developers.openai.com/api/docs/models/"+model;}
+ public static void RequireSupportedModel(string model){if(model is not ("gpt-4.1-mini" or "gpt-4.1-nano"))throw new InvalidOperationException("Model chưa hỗ trợ; chưa gửi dịch.");}
  internal static ModelPrice ParsePrice(string html,DateTimeOffset checkedUtc)
  {
   var content=Regex.Replace(html,@"<(script|style)\b[^>]*>.*?</\1>","",RegexOptions.Singleline|RegexOptions.IgnoreCase);

@@ -7,7 +7,8 @@ public sealed record MetroTextDocument(string IndexHash,string TextHash,string M
 public static class MetroLocalization
 {
  private sealed record Entry(ushort Type,string Name,ushort Archive,uint Offset,uint Size,uint Packed,ushort Children,uint First);
- public static MetroTextDocument ReadEnglish(string root)
+ public static MetroTextDocument ReadEnglish(string root)=>Parse(ReadEnglishBytes(root),UpdateService.Hash(Path.Combine(root,"content.vfx")));
+ public static byte[] ReadEnglishBytes(string root)
  {
   var index=Path.Combine(root,"content.vfx");if(new FileInfo(index).Length>64_000_000)throw new InvalidDataException("Mục lục quá lớn.");
   using var stream=File.OpenRead(index);using var reader=new BinaryReader(stream,Encoding.UTF8);
@@ -30,7 +31,7 @@ public static class MetroLocalization
   void Walk(int i,string parent,int depth){if(depth>100||i<0||i>=entries.Count||!seen.Add(i))throw new InvalidDataException("Cây tài nguyên lỗi.");var e=entries[i];var path=(parent+"/"+e.Name).TrimStart('/').Replace('\\','/');if(e.Type==8){for(var j=0;j<e.Children;j++)Walk(checked((int)e.First+j),path,depth+1);}else if(path.Equals("content/localization/stable_us.lng",StringComparison.OrdinalIgnoreCase)){if(english!=null)throw new InvalidDataException("Trùng tài nguyên tiếng Anh.");english=e;}}
   Walk(0,"",0);if(seen.Count!=entries.Count||english==null)throw new InvalidDataException("Chưa nhận diện được tài nguyên tiếng Anh.");
   var resource=Extract(Path.Combine(root,archives[english.Archive]),english.Offset,english.Packed,english.Size);
-  return Parse(resource,UpdateService.Hash(index));
+  return resource;
  }
  internal static byte[] Extract(string path,uint offset,uint packed,uint size)
  {
@@ -38,7 +39,7 @@ public static class MetroLocalization
   if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new InvalidDataException("Không đọc archive liên kết.");
   using var file=File.OpenRead(path);if((long)offset+packed>file.Length)throw new InvalidDataException("Tài nguyên nằm ngoài archive.");file.Position=offset;var input=new byte[packed];file.ReadExactly(input);if(packed==size)return input;
   var result=new byte[size];int p=0,o=0;
-  while(p<input.Length){if(input.Length-p<8)throw new InvalidDataException("Header khối bị thiếu.");var c=BitConverter.ToUInt32(input,p);var u=BitConverter.ToUInt32(input,p+4);p+=8;if(c<8||c-8>input.Length-p||u>size-o)throw new InvalidDataException("Kích thước khối lỗi.");var end=checked(p+(int)c-8);var start=o;
+  while(p<input.Length){if(input.Length-p<8)throw new InvalidDataException("Header khối bị thiếu.");var c=BitConverter.ToUInt32(input,p);var u=BitConverter.ToUInt32(input,p+4);p+=8;if(c<8||c-8>input.Length-p||(c==u?u-8:u)>size-o)throw new InvalidDataException("Kích thước khối lỗi.");var end=checked(p+(int)c-8);var start=o;
    if(c==u){var count=end-p;if(count>result.Length-o)throw new InvalidDataException("Khối thô quá lớn.");input.AsSpan(p,count).CopyTo(result.AsSpan(o));o+=count;p=end;continue;}
    int Extended(int length){if(length==15){int b;do{if(p>=end)throw new InvalidDataException("Khối LZ4 bị thiếu.");b=input[p++];length=checked(length+b);}while(b==255);}return length;}
    while(p<end){var token=input[p++];var literal=Extended(token>>4);if(literal>end-p||literal>result.Length-o)throw new InvalidDataException("LZ4 literal lỗi.");input.AsSpan(p,literal).CopyTo(result.AsSpan(o));p+=literal;o+=literal;if(p==end)break;if(end-p<2)throw new InvalidDataException("LZ4 offset lỗi.");var distance=input[p]|input[p+1]<<8;p+=2;if(distance==0||distance>o)throw new InvalidDataException("LZ4 tham chiếu lỗi.");var count=checked(Extended(token&15)+4);if(count>result.Length-o)throw new InvalidDataException("LZ4 output lỗi.");for(var j=0;j<count;j++){result[o]=result[o-distance];o++;}}
@@ -59,4 +60,5 @@ public static class MetroLocalization
   return new(indexHash,Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes)),new string(required.Where(c=>!chars.Contains(c)).Distinct().ToArray()),lines);
  }
 }
+
 
